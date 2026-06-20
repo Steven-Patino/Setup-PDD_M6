@@ -1,18 +1,6 @@
 # =============================================================================
 # docker-compose.yaml — Pipeline ETL/ELT con Airflow + dbt
 # =============================================================================
-# Basado en la configuración oficial de Airflow, simplificada con LocalExecutor.
-# SERVICIOS ELIMINADOS vs. la guía oficial (CeleryExecutor):
-#   ✗ Redis          — solo necesario para colas de tareas distribuidas
-#   ✗ airflow-worker — los workers corren dentro del mismo proceso (LocalExecutor)
-#   ✗ flower         — panel de monitoreo de Celery, innecesario aquí
-#
-# SERVICIOS ACTIVOS:
-#   ✓ postgres-meta      — BD interna para metadatos de Airflow (NO es tu BD externa)
-#   ✓ airflow-init       — inicializa la BD y crea el usuario admin (corre una vez)
-#   ✓ airflow-webserver  — interfaz gráfica en http://localhost:8080
-#   ✓ airflow-scheduler  — orquestador de tareas
-# =============================================================================
 
 # --- Bloque reutilizable (ancla YAML) ---------------------------------------
 # Define configuración compartida entre webserver y scheduler.
@@ -23,7 +11,7 @@ x-airflow-common:
     context: .
     dockerfile: Dockerfile
   # Nombre de la imagen construida. Docker la cachea con este tag.
-  image: custom-airflow-dbt:2.9.3
+  image: custom-airflow-dbt:3.2.2
   env_file:
     - .env
   environment:
@@ -84,11 +72,10 @@ services:
   # ---------------------------------------------------------------------------
   # 1. PostgreSQL — Base de datos INTERNA de metadatos de Airflow
   # ---------------------------------------------------------------------------
-  # ⚠️ Este Postgres NO es tu base de datos de proyecto.
-  # Tu BD externa se configura únicamente en el archivo .env.
+  # La BD externa se configura únicamente en el archivo .env.
   # ---------------------------------------------------------------------------
   postgres-meta:
-    image: postgres:15-alpine          # Alpine = imagen mínima (~80 MB vs ~400 MB)
+    image: postgres:15-alpine
     container_name: airflow_postgres_meta
     environment:
       POSTGRES_USER: airflow
@@ -144,7 +131,7 @@ services:
     container_name: airflow_webserver
     command: webserver
     ports:
-      - "8080:8080"                    # Acceder en http://localhost:8080
+      - "8080:8080"
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 30s

@@ -1,5 +1,5 @@
-# Imagen base oficial de Airflow. Cambiar la versión aquí si se necesita otra.
-FROM apache/airflow:2.9.3
+# Imagen base oficial de Airflow. Actualizada a la última versión estable (3.2.2).
+FROM apache/airflow:3.2.2
 
 # Paso 1: instalar dependencias del sistema como root
 USER root
