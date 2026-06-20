@@ -1,0 +1,26 @@
+# =============================================================================
+# dbt/profiles.yml — Configuración de conexión a la base de datos
+# =============================================================================
+# Este archivo es SEGURO para subir a Git porque no contiene credenciales.
+# Todos los valores sensibles se leen desde variables de entorno con env_var().
+#
+# Las variables de entorno son inyectadas por docker-compose.yaml,
+# que a su vez las lee del archivo .env (excluido de Git).
+#
+# Flujo: .env → docker-compose.yaml (environment:) → Contenedor → profiles.yml
+# =============================================================================
+
+default:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host:     "{{ env_var('DBT_DB_HOST') }}"
+      port:     "{{ env_var('DBT_DB_PORT', '5432') | int }}"
+      user:     "{{ env_var('DBT_DB_USER') }}"
+      password: "{{ env_var('DBT_DB_PASSWORD') }}"
+      dbname:   "{{ env_var('DBT_DB_NAME') }}"
+      schema:   "{{ env_var('DBT_DB_SCHEMA', 'public') }}"
+      threads: 4                  # Paralelismo de modelos dbt
+      connect_timeout: 10         # Segundos antes de abortar la conexión
+      sslmode: prefer             # Usar SSL si el servidor lo soporta

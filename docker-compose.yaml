@@ -1,0 +1,188 @@
+# =============================================================================
+# docker-compose.yaml — Pipeline ETL/ELT con Airflow + dbt
+# =============================================================================
+# Basado en la configuración oficial de Airflow, simplificada con LocalExecutor.
+# SERVICIOS ELIMINADOS vs. la guía oficial (CeleryExecutor):
+#   ✗ Redis          — solo necesario para colas de tareas distribuidas
+#   ✗ airflow-worker — los workers corren dentro del mismo proceso (LocalExecutor)
+#   ✗ flower         — panel de monitoreo de Celery, innecesario aquí
+#
+# SERVICIOS ACTIVOS:
+#   ✓ postgres-meta      — BD interna para metadatos de Airflow (NO es tu BD externa)
+#   ✓ airflow-init       — inicializa la BD y crea el usuario admin (corre una vez)
+#   ✓ airflow-webserver  — interfaz gráfica en http://localhost:8080
+#   ✓ airflow-scheduler  — orquestador de tareas
+# =============================================================================
+
+# --- Bloque reutilizable (ancla YAML) ---------------------------------------
+# Define configuración compartida entre webserver y scheduler.
+# Cualquier cambio aquí se aplica a ambos servicios automáticamente.
+x-airflow-common:
+  &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  # Nombre de la imagen construida. Docker la cachea con este tag.
+  image: custom-airflow-dbt:2.9.3
+  env_file:
+    - .env
+  environment:
+    &airflow-common-env
+    # ── Executor ──────────────────────────────────────────────────────────────
+    # LocalExecutor: las tareas corren como subprocesos en el mismo contenedor
+    # del Scheduler. Sin Redis, sin Workers externos. Ideal para desarrollo.
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+
+    # ── Base de datos de metadatos de Airflow ─────────────────────────────────
+    # Apunta al servicio 'postgres-meta' definido más abajo (red interna Docker).
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-meta/airflow
+
+    # ── Seguridad ─────────────────────────────────────────────────────────────
+    # FERNET_KEY: cifra las conexiones y variables sensibles almacenadas en Airflow.
+    # El valor viene del archivo .env. Debe ser idéntico entre webserver y scheduler.
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+
+    # ── Comportamiento ────────────────────────────────────────────────────────
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+
+    # ── Variables de dbt ──────────────────────────────────────────────────────
+    # Estas variables se inyectan en el contenedor y dbt/profiles.yml
+    # las lee con la función env_var(). Ver sección de credenciales en .env.example.
+    DBT_DB_HOST: ${DBT_DB_HOST}
+    DBT_DB_PORT: ${DBT_DB_PORT}
+    DBT_DB_USER: ${DBT_DB_USER}
+    DBT_DB_PASSWORD: ${DBT_DB_PASSWORD}
+    DBT_DB_NAME: ${DBT_DB_NAME}
+    DBT_DB_SCHEMA: ${DBT_DB_SCHEMA}
+
+  volumes:
+    # Rutas RELATIVAS al docker-compose.yaml → portabilidad garantizada.
+    # Los archivos locales se montan en tiempo real: editar un DAG no requiere reconstruir.
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./dbt:/opt/airflow/dbt        # Proyecto dbt completo disponible en el contenedor
+
+  # El usuario 50000 (airflow) necesita permiso de grupo root (0) para escribir logs.
+  # En Windows/Mac con Docker Desktop esto es transparente. En Linux: ver AIRFLOW_UID en .env.
+  user: "${AIRFLOW_UID:-50000}:0"
+
+  depends_on:
+    &airflow-common-depends-on
+    postgres-meta:
+      condition: service_healthy   # No arranca hasta que Postgres responda
+
+
+# =============================================================================
+# SERVICIOS
+# =============================================================================
+services:
+
+  # ---------------------------------------------------------------------------
+  # 1. PostgreSQL — Base de datos INTERNA de metadatos de Airflow
+  # ---------------------------------------------------------------------------
+  # ⚠️ Este Postgres NO es tu base de datos de proyecto.
+  # Tu BD externa se configura únicamente en el archivo .env.
+  # ---------------------------------------------------------------------------
+  postgres-meta:
+    image: postgres:15-alpine          # Alpine = imagen mínima (~80 MB vs ~400 MB)
+    container_name: airflow_postgres_meta
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      # Volumen nombrado: los metadatos de Airflow persisten entre reinicios.
+      - postgres_meta_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # 2. Inicialización — Corre UNA VEZ y termina
+  # ---------------------------------------------------------------------------
+  # Realiza la migración de la BD de metadatos y crea el usuario admin.
+  # Los servicios webserver y scheduler esperan a que este complete con éxito.
+  # ---------------------------------------------------------------------------
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        echo ">>> [1/2] Migrando base de datos de metadatos de Airflow..."
+        airflow db upgrade
+
+        echo ">>> [2/2] Creando usuario administrador (se ignora si ya existe)..."
+        airflow users create \
+          --username "${_AIRFLOW_WWW_USER_USERNAME:-admin}" \
+          --firstname "Admin" \
+          --lastname "User" \
+          --role "Admin" \
+          --email "admin@pipeline.local" \
+          --password "${_AIRFLOW_WWW_USER_PASSWORD:-admin}" || true
+
+        echo ">>> Inicialización completada exitosamente."
+    restart: on-failure
+    depends_on:
+      postgres-meta:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # 3. Webserver — Interfaz gráfica de Airflow
+  # ---------------------------------------------------------------------------
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow_webserver
+    command: webserver
+    ports:
+      - "8080:8080"                    # Acceder en http://localhost:8080
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # 4. Scheduler — Motor de orquestación de Airflow
+  # ---------------------------------------------------------------------------
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow_scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+
+# =============================================================================
+# VOLÚMENES
+# =============================================================================
+volumes:
+  # Solo los metadatos de Airflow se persisten en un volumen Docker nombrado.
+  # Los DAGs, logs y el proyecto dbt se montan desde el sistema de archivos local
+  # (más arriba en 'volumes:') para máxima portabilidad y edición en caliente.
+  postgres_meta_data:
+    driver: local

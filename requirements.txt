@@ -1,0 +1,4 @@
+# Dependencias instaladas SOBRE la imagen oficial de Airflow.
+# Versiones fijadas para garantizar reproducibilidad total del entorno.
+dbt-core==1.8.4
+dbt-postgres==1.8.2

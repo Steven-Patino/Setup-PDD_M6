@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: mart_summary
+    description: >
+      Tabla analítica final: agrega los datos de staging por categoría y mes.
+      Esta es la tabla que consumen los dashboards y herramientas de BI.
+      Materializada como TABLE para garantizar rendimiento en consultas.
+    columns:
+      - name: categoria
+        description: "Categoría del grupo de registros"
+        tests:
+          - not_null
+      - name: mes
+        description: "Primer día del mes del registro (truncado con DATE_TRUNC)"
+        tests:
+          - not_null
+      - name: total_registros
+        description: "Cantidad de registros en esa categoría y mes"
+        tests:
+          - not_null
+      - name: valor_total
+        description: "Suma de todos los valores del grupo"
+      - name: valor_promedio
+        description: "Promedio de valores del grupo"
+      - name: valor_minimo
+        description: "Valor mínimo del grupo"
+      - name: valor_maximo
+        description: "Valor máximo del grupo"

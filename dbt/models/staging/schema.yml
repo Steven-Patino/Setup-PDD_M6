@@ -1,0 +1,45 @@
+version: 2
+
+# =============================================================================
+# Definición de FUENTES (tablas crudas en la BD externa)
+# =============================================================================
+# Editar 'tables' para que coincida con los nombres reales de tus tablas fuente.
+# La variable DBT_DB_SCHEMA determina el esquema donde dbt buscará estas tablas.
+sources:
+  - name: raw
+    description: "Tablas crudas en la base de datos PostgreSQL externa"
+    schema: "{{ env_var('DBT_DB_SCHEMA', 'public') }}"
+    tables:
+      - name: your_source_table
+        description: >
+          Tabla principal de datos crudos.
+          Reemplazar 'your_source_table' por el nombre real de tu tabla.
+
+# =============================================================================
+# Definición de MODELOS de staging (tests y documentación)
+# =============================================================================
+models:
+  - name: stg_source_data
+    description: >
+      Vista de staging que limpia y estandariza los datos crudos de la fuente.
+      Aplica castings de tipos, normalización de texto y filtros de nulos.
+    columns:
+      - name: id
+        description: "Identificador único del registro"
+        tests:
+          - not_null
+          - unique
+      - name: nombre
+        description: "Nombre normalizado (minúsculas, sin espacios extra)"
+        tests:
+          - not_null
+      - name: valor
+        description: "Valor numérico del registro (0 si era nulo en origen)"
+      - name: categoria
+        description: "Categoría del registro"
+        tests:
+          - not_null
+      - name: fecha_registro
+        description: "Fecha del registro en la fuente"
+      - name: _procesado_en
+        description: "Timestamp de cuando dbt procesó este registro"
