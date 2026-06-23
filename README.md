@@ -1,8 +1,9 @@
-# Pipeline ETL/ELT — Apache Airflow + dbt + PostgreSQL
+# Pipeline ETL/ELT — DataMart S.A.S.
+### Apache Airflow + dbt + PostgreSQL
 
-Pipeline de datos portable y containerizado que orquesta transformaciones ELT
-usando **Apache Airflow** (LocalExecutor) y **dbt-postgres** sobre una base de
-datos PostgreSQL externa.
+Pipeline de datos completo que procesa transacciones de comercio electrónico
+desde archivos CSV de Kaggle hasta un Data Warehouse en PostgreSQL,
+usando **Apache Airflow** (LocalExecutor) como orquestador y **dbt** para transformaciones.
 
 ---
 
@@ -13,8 +14,8 @@ datos PostgreSQL externa.
 | Docker Desktop | 4.x | `docker --version` |
 | Docker Compose | v2.1+ | `docker compose version` |
 
-> **No se requiere** Python, Airflow, dbt, ni ninguna dependencia instalada
-> localmente. Todo corre dentro de los contenedores.
+> No se requiere Python, Airflow, dbt ni ninguna dependencia local.
+> Todo corre dentro de los contenedores Docker.
 
 ---
 
@@ -23,31 +24,47 @@ datos PostgreSQL externa.
 ```
 Simulacro_PDD_M6/
 │
-├── Dockerfile              # Imagen personalizada: Airflow 2.9.3 + dbt-postgres
-├── requirements.txt        # dbt-core y dbt-postgres (versiones fijadas)
-├── docker-compose.yaml     # Orquestación con LocalExecutor (sin Redis ni Workers)
+├── Dockerfile              # Airflow 3.2.2 + dbt-core + dbt-postgres
+├── requirements.txt        # Versiones fijadas de dependencias
+├── docker-compose.yaml     # 4 servicios: postgres-meta, init, webserver, scheduler
 │
-├── .env.example            # ← PLANTILLA de credenciales (copiar a .env)
+├── .env.example            # ← PLANTILLA: copiar a .env y editar
 ├── .env                    # Credenciales reales (excluido de Git)
 ├── .gitignore
 │
+├── data/
+│   ├── data.csv            # Fuente 1: Kaggle ecommerce-data (muestra incluida)
+│   └── online_retail_II.csv # Fuente 2: Kaggle historial (muestra incluida)
+│
 ├── dags/
-│   └── etl_pipeline_dag.py # DAG: debug → dbt run → dbt test → dbt docs
+│   └── etl_pipeline_dag.py # DAG completo del pipeline DataMart
 │
-├── plugins/                # Plugins personalizados de Airflow (vacío por defecto)
+├── dbt/
+│   ├── profiles.yml        # Conexión BD externa (lee variables de entorno)
+│   ├── dbt_project.yml     # Configuración del proyecto dbt
+│   ├── macros/
+│   │   └── generate_schema_name.sql  # Garantiza schemas raw/staging/marts exactos
+│   └── models/
+│       ├── staging/
+│       │   ├── schema.yml
+│       │   ├── stg_ecommerce.sql          # Limpieza de data.csv
+│       │   ├── stg_online_retail.sql      # Limpieza de online_retail_II.csv
+│       │   └── stg_transactions_unified.sql # Unión deduplicada
+│       └── marts/
+│           ├── schema.yml
+│           ├── dim_producto.sql            # Dimensión productos + categorías
+│           ├── dim_cliente.sql             # Dimensión clientes (incluye GUEST)
+│           ├── dim_tiempo.sql              # Dimensión tiempo
+│           ├── dim_pais.sql                # Dimensión países
+│           ├── fact_ventas.sql             # Tabla de hechos: ventas
+│           ├── fact_devoluciones.sql       # Tabla de hechos: devoluciones
+│           └── mart_revenue_producto.sql   # Mart analítico pre-agregado
 │
-├── logs/                   # Logs de ejecución (generado automáticamente)
+├── docs/
+│   ├── decisiones_tecnicas.md  # Justificación del diseño y casos ambiguos
+│   └── queries_negocio.sql     # Consultas SQL para las 7 preguntas de negocio
 │
-└── dbt/
-    ├── profiles.yml        # Conexión a BD externa (lee credenciales de .env)
-    ├── dbt_project.yml     # Configuración del proyecto dbt
-    └── models/
-        ├── staging/
-        │   ├── schema.yml          # Fuentes y tests de la capa staging
-        │   └── stg_source_data.sql # Vista: limpieza y estandarización de datos
-        └── marts/
-            ├── schema.yml          # Tests y documentación de la capa marts
-            └── mart_summary.sql    # Tabla: agregaciones para análisis
+└── logs/                    # Generado automáticamente por Airflow
 ```
 
 ---
@@ -56,44 +73,39 @@ Simulacro_PDD_M6/
 
 ### Paso 1 — Configurar credenciales
 
-Copiar la plantilla y rellenar las credenciales de la **base de datos PostgreSQL externa**:
-
 ```bash
-# En Windows PowerShell:
+# Windows PowerShell:
 copy .env.example .env
 
-# En Mac/Linux:
+# Mac / Linux:
 cp .env.example .env
 ```
 
-Abrir `.env` y completar los valores de la sección `BASE DE DATOS EXTERNA`:
+El archivo `.env.example` ya trae los valores correctos para la BD externa del examen.
+Si las credenciales cambian, editar la sección `BASE DE DATOS EXTERNA` en `.env`.
 
-```env
-DBT_DB_HOST=your-cloud-db-host.example.com
-DBT_DB_PORT=5432
-DBT_DB_USER=your_db_username
-DBT_DB_PASSWORD=your_secure_password
-DBT_DB_NAME=your_database_name
-DBT_DB_SCHEMA=public
-```
-
-> Los valores de Airflow (`FERNET_KEY`, `admin`/`admin`) vienen pre-configurados
-> en `.env.example` y no necesitan modificarse para uso local.
+> Los datos de muestra en `data/` son suficientes para demostrar el pipeline.
+> Para usar los datasets completos de Kaggle, reemplazar los archivos en `data/`
+> con los originales descargados de:
+> - https://www.kaggle.com/datasets/carrie1/ecommerce-data → `data/data.csv`
+> - https://www.kaggle.com/datasets/thedevastator/online-retail-transaction-dataset → `data/online_retail_II.csv`
 
 ---
 
-### Paso 2 — Construir y levantar el entorno
+### Paso 2 — Levantar el entorno completo
 
 ```bash
 docker compose up --build -d
 ```
 
-Este único comando:
-1. Construye la imagen personalizada con Airflow + dbt (solo la primera vez, ~3-5 min)
-2. Levanta PostgreSQL interno y espera a que esté saludable
-3. Inicializa la base de datos de metadatos de Airflow
-4. Crea el usuario `admin` automáticamente
-5. Arranca el Webserver y el Scheduler en segundo plano
+Este comando hace **todo automáticamente**:
+1. Construye la imagen con Airflow + dbt (~3-5 min la primera vez)
+2. Levanta PostgreSQL interno para metadatos de Airflow
+3. Migra la base de datos de metadatos
+4. Crea el usuario `admin` en la UI
+5. **Registra la Airflow Connection `postgres_datamart`** (BD externa)
+6. **Inicializa las Airflow Variables** (`data_path`, `batch_size`, `pipeline_env`)
+7. Arranca el webserver y el scheduler
 
 Verificar que todos los contenedores estén corriendo:
 
@@ -113,18 +125,99 @@ airflow_scheduler       running
 
 ---
 
-### Paso 3 — Acceder a Airflow y ejecutar el pipeline
+### Paso 3 — Ejecutar el pipeline
 
-Abrir en el navegador: **[http://localhost:8080](http://localhost:8080)**
+Abrir en el navegador: **http://localhost:8080**
 
 | Campo | Valor |
 |---|---|
 | Usuario | `admin` |
 | Contraseña | `admin` |
 
-1. Buscar el DAG `pipeline_etl_dbt` en la lista
-2. Activarlo con el toggle (izquierda del nombre)
-3. Hacer clic en ▶ **Trigger DAG** para ejecutarlo manualmente
+1. Buscar el DAG **`datamart_pipeline`**
+2. Activarlo con el toggle izquierdo
+3. Hacer clic en **▶ Trigger DAG** para ejecutarlo manualmente
+
+El pipeline tarda ~2-5 minutos con los datos de muestra.
+
+---
+
+## Validar que la Connection y Variables quedaron configuradas
+
+Desde la UI de Airflow:
+- **Connections:** Admin → Connections → buscar `postgres_datamart`
+- **Variables:** Admin → Variables → verificar `data_path`, `batch_size`, `pipeline_env`
+
+Desde la terminal:
+```bash
+docker exec airflow_scheduler airflow connections get postgres_datamart
+docker exec airflow_scheduler airflow variables get data_path
+```
+
+---
+
+## Verificar que los datos llegaron al repositorio analítico
+
+Ejecutar la consulta de validación rápida en la BD externa:
+
+```sql
+SELECT 'raw.ecommerce_data' AS tabla, COUNT(*) FROM raw.ecommerce_data
+UNION ALL
+SELECT 'raw.online_retail_ii', COUNT(*) FROM raw.online_retail_ii
+UNION ALL
+SELECT 'marts.fact_ventas', COUNT(*) FROM marts.fact_ventas
+UNION ALL
+SELECT 'marts.dim_producto', COUNT(*) FROM marts.dim_producto;
+```
+
+---
+
+## Flujo del Pipeline (DAG)
+
+```
+crear_schemas_y_tablas
+       │
+       ├──► cargar_ecommerce_raw     (data.csv → raw.ecommerce_data)
+       │
+       └──► cargar_online_retail_raw (online_retail_II.csv → raw.online_retail_ii)
+                    │ (ambas cargas en paralelo)
+                    ▼
+            dbt_run_staging
+            (stg_ecommerce → stg_online_retail → stg_transactions_unified)
+                    │
+                    ▼
+            dbt_run_marts
+            (dim_* → fact_* → mart_revenue_producto)
+                    │
+                    ▼
+            dbt_test
+            (not_null, unique, accepted_values)
+```
+
+---
+
+## Schemas en la Base de Datos Externa
+
+| Schema | Contiene |
+|---|---|
+| `raw` | Tablas de ingesta directa desde CSV (texto sin transformar) + `rejected_records` |
+| `staging` | Vistas limpias: tipos correctos, fechas UTC, descriptions canónicas |
+| `marts` | Star Schema: `dim_*` + `fact_ventas` + `fact_devoluciones` + `mart_revenue_producto` |
+
+---
+
+## Preguntas de Negocio
+
+Las 7 consultas SQL que responden las preguntas del examen están en
+[docs/queries_negocio.sql](docs/queries_negocio.sql).
+
+Ejemplo — Evolución mensual de ventas netas:
+```sql
+SELECT anio_mes, SUM(revenue_neto) AS ventas_netas
+FROM marts.mart_revenue_producto
+GROUP BY anio_mes
+ORDER BY anio_mes;
+```
 
 ---
 
@@ -133,66 +226,43 @@ Abrir en el navegador: **[http://localhost:8080](http://localhost:8080)**
 ```bash
 # Ver logs en tiempo real
 docker compose logs -f airflow-scheduler
-docker compose logs -f airflow-webserver
 
-# Apagar el entorno (preserva los datos)
+# Apagar (preserva datos)
 docker compose down
 
-# Apagar y borrar TODOS los datos (reset completo)
+# Reset completo (borra volúmenes)
 docker compose down -v
 
-# Reconstruir la imagen tras cambios en Dockerfile o requirements.txt
+# Reconstruir imagen (tras cambios en Dockerfile o requirements.txt)
 docker compose up --build -d
 ```
 
 ---
 
-## Adaptar los modelos dbt a tu proyecto
+## Decisiones Técnicas
 
-1. Editar `dbt/models/staging/schema.yml` y cambiar `your_source_table` por el nombre real de tu tabla fuente.
-2. Editar `dbt/models/staging/stg_source_data.sql` para que las columnas coincidan con tu esquema.
-3. `dbt/models/marts/mart_summary.sql` se actualizará automáticamente al referenciar `{{ ref('stg_source_data') }}`.
-
----
-
-## Arquitectura del Entorno Docker
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                   Docker Network                        │
-│                                                         │
-│  ┌──────────────────┐     ┌─────────────────────────┐  │
-│  │  postgres-meta   │     │   airflow-webserver     │  │
-│  │  (PostgreSQL 15) │◄────│   :8080  ←── Tú         │  │
-│  │  Metadatos de    │     └─────────────────────────┘  │
-│  │  Airflow (BBDD   │                                   │
-│  │  interna)        │     ┌─────────────────────────┐  │
-│  └──────────────────┘     │   airflow-scheduler     │  │
-│                           │   LocalExecutor         │  │
-│                           │   (corre tareas dbt)    │  │
-│                           └──────────┬──────────────┘  │
-└──────────────────────────────────────┼─────────────────┘
-                                       │ dbt CLI
-                                       ▼
-                          ┌────────────────────────┐
-                          │  PostgreSQL EXTERNO     │
-                          │  (nube) ← tu BD real   │
-                          │  Configurado en .env   │
-                          └────────────────────────┘
-```
+Ver [docs/decisiones_tecnicas.md](docs/decisiones_tecnicas.md) para:
+- Diseño del modelo estrella y justificación
+- Cómo se resolvió cada caso ambiguo (CustomerID nulo, descripciones, duplicados)
+- Garantía de idempotencia del DAG
+- Estrategia de asignación de categorías sin API
 
 ---
 
 ## Solución de Problemas
 
-**El webserver tarda en arrancar** → Es normal, esperar 30-60 segundos tras `docker compose up`. Reintentar la URL.
+**El webserver tarda en arrancar** → Esperar 30-60 s. Es normal en el primer inicio.
 
-**Error "permission denied" en logs/** (Linux) → Ejecutar `echo "AIRFLOW_UID=$(id -u)" >> .env` y reiniciar.
+**`airflow_init` termina con código distinto de 0** → Ver logs: `docker compose logs airflow-init`
 
-**dbt no puede conectar a la BD** → Verificar que las variables `DBT_DB_*` en `.env` son correctas y que la BD externa permite conexiones desde el exterior (reglas de firewall/VPC).
+**dbt no conecta a la BD** → Verificar que las variables `DBT_DB_*` en `.env` son correctas y que el servidor acepta conexiones externas.
 
-**Reconstruir sin caché** (si hay problemas con dependencias):
+**Error de permisos en `logs/` (Linux)** → Ejecutar:
+```bash
+echo "AIRFLOW_UID=$(id -u)" >> .env && docker compose up -d
+```
+
+**Reconstruir sin caché:**
 ```bash
 docker compose build --no-cache && docker compose up -d
 ```
-#

@@ -1,13 +1,10 @@
 # =============================================================================
-# dbt/profiles.yml — Configuración de conexión a la base de datos
+# dbt/profiles.yml — Conexión a la base de datos PostgreSQL externa
 # =============================================================================
-# Este archivo es SEGURO para subir a Git porque no contiene credenciales.
-# Todos los valores sensibles se leen desde variables de entorno con env_var().
+# SEGURO para subir a Git: todos los valores sensibles vienen de variables
+# de entorno inyectadas por docker-compose.yaml desde el archivo .env.
 #
-# Las variables de entorno son inyectadas por docker-compose.yaml,
-# que a su vez las lee del archivo .env (excluido de Git).
-#
-# Flujo: .env → docker-compose.yaml (environment:) → Contenedor → profiles.yml
+# Flujo: .env → docker-compose (environment:) → container → profiles.yml
 # =============================================================================
 
 default:
@@ -20,7 +17,9 @@ default:
       user:     "{{ env_var('DBT_DB_USER') }}"
       password: "{{ env_var('DBT_DB_PASSWORD') }}"
       dbname:   "{{ env_var('DBT_DB_NAME') }}"
+      # El schema 'public' es el schema por defecto de dbt.
+      # Los modelos van a 'staging' y 'marts' gracias a la macro generate_schema_name.
       schema:   "{{ env_var('DBT_DB_SCHEMA', 'public') }}"
-      threads: 4                  # Paralelismo de modelos dbt
-      connect_timeout: 10         # Segundos antes de abortar la conexión
-      sslmode: prefer             # Usar SSL si el servidor lo soporta
+      threads: 4
+      connect_timeout: 10
+      sslmode: prefer

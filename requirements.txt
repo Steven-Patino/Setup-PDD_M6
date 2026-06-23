@@ -1,4 +1,11 @@
-# Dependencias instaladas SOBRE la imagen oficial de Airflow.
+# =============================================================================
+# Dependencias instaladas sobre la imagen oficial de Airflow (apache/airflow:3.2.2)
 # Versiones fijadas para garantizar reproducibilidad total del entorno.
+# =============================================================================
+
+# dbt con adaptador para PostgreSQL
 dbt-core==1.8.4
 dbt-postgres==1.8.2
+
+# pandas: lectura eficiente de CSV en chunks (ya suele estar en Airflow, pero se fija)
+pandas>=2.0.0

@@ -1,36 +1,36 @@
 # =============================================================================
-# dbt_project.yml — Configuración principal del proyecto dbt
+# dbt_project.yml — Proyecto DataMart S.A.S.
 # =============================================================================
 
-name: 'pipeline_etl'
+name: 'datamart_pipeline'
 version: '1.0.0'
 config-version: 2
 
-# Debe coincidir con el nombre del perfil en profiles.yml
 profile: 'default'
 
-# Rutas relativas a la raíz del proyecto dbt
 model-paths:    ["models"]
+macro-paths:    ["macros"]
 test-paths:     ["tests"]
 seed-paths:     ["seeds"]
-macro-paths:    ["macros"]
 snapshot-paths: ["snapshots"]
 
-# Carpetas generadas automáticamente (excluidas de Git en .gitignore)
 clean-targets:
   - "target"
   - "dbt_packages"
 
 # =============================================================================
-# Configuración de materialización por capa
+# Configuración de materialización y schemas
 # =============================================================================
-# staging → VIEWS: no consumen espacio de almacenamiento, siempre actualizadas.
-# marts   → TABLES: materializadas para consultas rápidas y analítica.
+# La macro generate_schema_name.sql garantiza que los schemas se creen
+# exactamente con los nombres definidos aquí (sin prefijos).
+#
+# staging → VIEWS  en schema 'staging': no consumen almacenamiento, siempre frescos
+# marts   → TABLES en schema 'marts':   materializados para consultas analíticas rápidas
 models:
-  pipeline_etl:
+  datamart_pipeline:
     staging:
       +materialized: view
-      +schema: staging           # Se creará en el schema: <DBT_DB_SCHEMA>_staging
+      +schema: staging
     marts:
       +materialized: table
-      +schema: marts             # Se creará en el schema: <DBT_DB_SCHEMA>_marts
+      +schema: marts

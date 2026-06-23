@@ -1,45 +1,45 @@
 version: 2
 
 # =============================================================================
-# Definición de FUENTES (tablas crudas en la BD externa)
+# Definición de FUENTES — tablas crudas cargadas por el DAG de Airflow
 # =============================================================================
-# Editar 'tables' para que coincida con los nombres reales de tus tablas fuente.
-# La variable DBT_DB_SCHEMA determina el esquema donde dbt buscará estas tablas.
 sources:
   - name: raw
-    description: "Tablas crudas en la base de datos PostgreSQL externa"
-    schema: "{{ env_var('DBT_DB_SCHEMA', 'public') }}"
+    description: "Schema raw: tablas cargadas directamente desde los CSV de Kaggle"
+    schema: raw
     tables:
-      - name: your_source_table
-        description: >
-          Tabla principal de datos crudos.
-          Reemplazar 'your_source_table' por el nombre real de tu tabla.
+      - name: ecommerce_data
+        description: "Datos crudos de data.csv (fuente 1: ecommerce 2010-2011)"
+      - name: online_retail_ii
+        description: "Datos crudos de online_retail_II.csv (fuente 2: historial 2009-2011)"
 
 # =============================================================================
-# Definición de MODELOS de staging (tests y documentación)
+# Definición de MODELOS de staging
 # =============================================================================
 models:
-  - name: stg_source_data
-    description: >
-      Vista de staging que limpia y estandariza los datos crudos de la fuente.
-      Aplica castings de tipos, normalización de texto y filtros de nulos.
+  - name: stg_ecommerce
+    description: "Staging de data.csv: limpieza, tipos, clasificación venta/devolución"
     columns:
-      - name: id
-        description: "Identificador único del registro"
+      - name: invoice_no
+        tests: [not_null]
+      - name: stock_code
+        tests: [not_null]
+      - name: transaction_type
         tests:
-          - not_null
-          - unique
-      - name: nombre
-        description: "Nombre normalizado (minúsculas, sin espacios extra)"
-        tests:
-          - not_null
-      - name: valor
-        description: "Valor numérico del registro (0 si era nulo en origen)"
-      - name: categoria
-        description: "Categoría del registro"
-        tests:
-          - not_null
-      - name: fecha_registro
-        description: "Fecha del registro en la fuente"
-      - name: _procesado_en
-        description: "Timestamp de cuando dbt procesó este registro"
+          - accepted_values:
+              values: ['VENTA', 'DEVOLUCION']
+
+  - name: stg_online_retail
+    description: "Staging de online_retail_II.csv: misma limpieza, columnas normalizadas"
+    columns:
+      - name: invoice_no
+        tests: [not_null]
+      - name: stock_code
+        tests: [not_null]
+
+  - name: stg_transactions_unified
+    description: "Unión deduplicada de ambas fuentes. Clave compuesta: invoice_no + stock_code + fecha"
+    columns:
+      - name: transaction_key
+        description: "Clave única MD5(invoice_no + stock_code + invoice_date_utc)"
+        tests: [not_null, unique]

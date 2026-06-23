@@ -1,29 +1,56 @@
 version: 2
 
 models:
-  - name: mart_summary
-    description: >
-      Tabla analítica final: agrega los datos de staging por categoría y mes.
-      Esta es la tabla que consumen los dashboards y herramientas de BI.
-      Materializada como TABLE para garantizar rendimiento en consultas.
+  - name: dim_producto
+    description: "Dimensión de productos con código, nombre canónico y categoría"
     columns:
-      - name: categoria
-        description: "Categoría del grupo de registros"
-        tests:
-          - not_null
-      - name: mes
-        description: "Primer día del mes del registro (truncado con DATE_TRUNC)"
-        tests:
-          - not_null
-      - name: total_registros
-        description: "Cantidad de registros en esa categoría y mes"
-        tests:
-          - not_null
-      - name: valor_total
-        description: "Suma de todos los valores del grupo"
-      - name: valor_promedio
-        description: "Promedio de valores del grupo"
-      - name: valor_minimo
-        description: "Valor mínimo del grupo"
-      - name: valor_maximo
-        description: "Valor máximo del grupo"
+      - name: producto_key
+        tests: [not_null, unique]
+      - name: codigo_producto
+        tests: [not_null, unique]
+
+  - name: dim_cliente
+    description: "Dimensión de clientes. Incluye 'GUEST' para transacciones sin ID"
+    columns:
+      - name: cliente_key
+        tests: [not_null, unique]
+      - name: customer_id
+        tests: [not_null]
+
+  - name: dim_tiempo
+    description: "Dimensión de tiempo: una fila por cada fecha presente en transacciones"
+    columns:
+      - name: tiempo_key
+        tests: [not_null, unique]
+      - name: fecha
+        tests: [not_null]
+
+  - name: dim_pais
+    description: "Dimensión de países"
+    columns:
+      - name: pais_key
+        tests: [not_null, unique]
+
+  - name: fact_ventas
+    description: "Tabla de hechos: solo VENTAS válidas (quantity>0, price>0)"
+    columns:
+      - name: transaction_key
+        tests: [not_null, unique]
+      - name: revenue_bruto
+        description: "quantity × unit_price"
+        tests: [not_null]
+
+  - name: fact_devoluciones
+    description: "Tabla de hechos: solo DEVOLUCIONES (quantity<=0)"
+    columns:
+      - name: transaction_key
+        tests: [not_null, unique]
+      - name: revenue_devolucion
+        description: "Valor positivo de la devolución para facilitar cálculo de revenue_neto"
+
+  - name: mart_revenue_producto
+    description: "Mart analítico pre-agregado: revenue neto por producto, fecha y país"
+    columns:
+      - name: revenue_neto
+        description: "revenue_ventas - revenue_devoluciones"
+        tests: [not_null]
