@@ -207,19 +207,24 @@ def cargar_ecommerce_raw(**kwargs):
             rows_ok.append(tuple(row_dict.values()))
 
         if rows_ok:
-            # Inserción en bloque (más rápido que fila a fila)
+            # Inserción en bloque (más rápido que fila a fila).
+            # Se usa copy_expert (no copy_from) porque copy_from pierde el
+            # schema 'raw' cuando el search_path de la sesión es 'public'
+            # (caso típico con PgBouncer). copy_expert escribe el schema
+            # explícito en el comando COPY, evitando "relation does not exist".
             buf = io.StringIO()
             for r in rows_ok:
                 line = "\t".join("" if v is None else str(v) for v in r)
                 buf.write(line + "\n")
             buf.seek(0)
-            cursor.copy_from(
+            cursor.copy_expert(
+                """
+                COPY raw.ecommerce_data
+                    (invoice_no, stock_code, description, quantity,
+                     invoice_date, unit_price, customer_id, country)
+                FROM STDIN WITH (FORMAT text)
+                """,
                 buf,
-                "raw.ecommerce_data",
-                columns=(
-                    "invoice_no", "stock_code", "description", "quantity",
-                    "invoice_date", "unit_price", "customer_id", "country",
-                ),
             )
             total_ok += len(rows_ok)
 
@@ -294,18 +299,22 @@ def cargar_online_retail_raw(**kwargs):
             rows_ok.append(tuple(row_dict.values()))
 
         if rows_ok:
+            # Se usa copy_expert (no copy_from) por la misma razón que en
+            # cargar_ecommerce_raw: copy_from no resuelve el schema 'raw'
+            # bajo PgBouncer con search_path='public'.
             buf = io.StringIO()
             for r in rows_ok:
                 line = "\t".join("" if v is None else str(v) for v in r)
                 buf.write(line + "\n")
             buf.seek(0)
-            cursor.copy_from(
+            cursor.copy_expert(
+                """
+                COPY raw.online_retail_ii
+                    (invoice, stock_code, description, quantity,
+                     invoice_date, price, customer_id, country)
+                FROM STDIN WITH (FORMAT text)
+                """,
                 buf,
-                "raw.online_retail_ii",
-                columns=(
-                    "invoice", "stock_code", "description", "quantity",
-                    "invoice_date", "price", "customer_id", "country",
-                ),
             )
             total_ok += len(rows_ok)
 
@@ -347,14 +356,6 @@ Orquesta el flujo completo de datos desde los CSV de Kaggle hasta el
 Data Warehouse en PostgreSQL, usando dbt para las transformaciones.
 
 ### Flujo de tareas
-```
-crear_schemas_y_tablas
-       ├── cargar_ecommerce_raw
-       └── cargar_online_retail_raw
-               └─── (ambas) ──► dbt_run_staging
-                                      └──► dbt_run_marts
-                                                └──► dbt_test
-```
 
 ### Variables de Airflow usadas
 - `data_path`: directorio de los CSVs dentro del contenedor

@@ -8,13 +8,19 @@ models:
         tests: [not_null, unique]
       - name: codigo_producto
         tests: [not_null, unique]
+      - name: nombre_canonico
+        tests: [not_null]
+      - name: categoria
+        tests: [not_null]
 
   - name: dim_cliente
-    description: "Dimensión de clientes. Incluye 'GUEST' para transacciones sin ID"
+    description: "Dimensión de clientes. Incluye GUEST para transacciones sin ID"
     columns:
       - name: cliente_key
         tests: [not_null, unique]
       - name: customer_id
+        tests: [not_null, unique]
+      - name: es_cliente_identificado
         tests: [not_null]
 
   - name: dim_tiempo
@@ -23,6 +29,10 @@ models:
       - name: tiempo_key
         tests: [not_null, unique]
       - name: fecha
+        tests: [not_null, unique]
+      - name: anio
+        tests: [not_null]
+      - name: mes
         tests: [not_null]
 
   - name: dim_pais
@@ -30,26 +40,77 @@ models:
     columns:
       - name: pais_key
         tests: [not_null, unique]
+      - name: nombre_pais
+        tests: [not_null, unique]
 
   - name: fact_ventas
-    description: "Tabla de hechos: solo VENTAS válidas (quantity>0, price>0)"
+    description: "Tabla de hechos: solo VENTAS validas (quantity > 0, price > 0)"
     columns:
       - name: transaction_key
         tests: [not_null, unique]
+      - name: producto_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_producto')
+              field: producto_key
+      - name: cliente_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_cliente')
+              field: cliente_key
+      - name: tiempo_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_tiempo')
+              field: tiempo_key
+      - name: pais_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_pais')
+              field: pais_key
       - name: revenue_bruto
-        description: "quantity × unit_price"
+        description: "quantity x unit_price"
         tests: [not_null]
 
   - name: fact_devoluciones
-    description: "Tabla de hechos: solo DEVOLUCIONES (quantity<=0)"
+    description: "Tabla de hechos: devoluciones y ajustes (quantity <= 0)"
     columns:
       - name: transaction_key
         tests: [not_null, unique]
+      - name: producto_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_producto')
+              field: producto_key
+      - name: cliente_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_cliente')
+              field: cliente_key
+      - name: tiempo_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_tiempo')
+              field: tiempo_key
+      - name: pais_key
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_pais')
+              field: pais_key
       - name: revenue_devolucion
-        description: "Valor positivo de la devolución para facilitar cálculo de revenue_neto"
+        description: "Valor positivo de la devolucion"
+        tests: [not_null]
 
   - name: mart_revenue_producto
-    description: "Mart analítico pre-agregado: revenue neto por producto, fecha y país"
+    description: "Mart analitico pre-agregado: revenue neto por producto, fecha y pais"
     columns:
       - name: revenue_neto
         description: "revenue_ventas - revenue_devoluciones"

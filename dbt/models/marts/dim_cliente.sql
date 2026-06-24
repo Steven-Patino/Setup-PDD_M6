@@ -1,22 +1,29 @@
 -- =============================================================================
 -- Dimensión: dim_cliente
 -- =============================================================================
--- Incluye todos los clientes identificados MÁS el cliente 'GUEST'.
--- Decisión documentada: las transacciones sin CustomerID se asignan a 'GUEST'
--- para no perder el volumen de ventas. Se puede filtrar en los análisis.
+-- Decision: los registros sin customer_id se conservan como GUEST para no
+-- perder volumen de ventas. Eso permite comparar clientes identificados vs no
+-- identificados sin romper el modelo dimensional.
 -- =============================================================================
 
-{{ config(materialized='table', schema='marts') }}
+{{ config(
+    materialized='table',
+    schema='marts',
+    post_hook=["ALTER TABLE \"{{ target.database }}\".\"marts\".\"dim_cliente\" ADD CONSTRAINT pk_dim_cliente PRIMARY KEY (cliente_key)"]
+) }}
 
-SELECT
-    MD5(customer_id)    AS cliente_key,
-    customer_id,
-    CASE
-        WHEN customer_id = 'GUEST' THEN false
-        ELSE true
-    END                 AS es_cliente_identificado
-FROM (
-    SELECT DISTINCT customer_id
+WITH clientes AS (
+    SELECT DISTINCT
+        customer_id
     FROM {{ ref('stg_transactions_unified') }}
     WHERE customer_id IS NOT NULL
-) clientes
+)
+
+SELECT
+    MD5(customer_id) AS cliente_key,
+    customer_id,
+    CASE
+        WHEN customer_id = 'GUEST' THEN FALSE
+        ELSE TRUE
+    END AS es_cliente_identificado
+FROM clientes

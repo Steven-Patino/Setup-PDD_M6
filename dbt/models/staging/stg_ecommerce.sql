@@ -1,74 +1,68 @@
 -- =============================================================================
 -- Modelo: stg_ecommerce
--- Fuente: raw.ecommerce_data (data.csv — Fuente 1: Kaggle ecommerce-data)
--- Capa:   Staging → VIEW (sin almacenamiento, siempre actualizada)
+-- Fuente: raw.ecommerce_data
+-- Capa:   Staging -> VIEW
 -- =============================================================================
--- Responsabilidad:
---   1. Castear tipos de dato correctamente
---   2. Normalizar product codes (MAYÚSCULAS, sin espacios)
---   3. Normalizar descripciones a MAYÚSCULAS (decisión de nombre canónico)
---   4. Estandarizar fechas a UTC
---   5. Rellenar CustomerID nulo con 'GUEST'
---   6. Clasificar cada registro como VENTA o DEVOLUCION
---
--- Decisiones técnicas documentadas en docs/decisiones_tecnicas.md
+-- Decision: esta capa solo limpia y normaliza. No excluye transacciones por
+-- negocio; eso se controla en stg_transactions_unified y en los facts.
 -- =============================================================================
 
 {{ config(materialized='view') }}
 
 WITH source AS (
-    SELECT * FROM {{ source('raw', 'ecommerce_data') }}
+    SELECT
+        invoice_no   AS raw_invoice_no,
+        stock_code   AS raw_stock_code,
+        description  AS raw_description,
+        quantity     AS raw_quantity,
+        invoice_date AS raw_invoice_date,
+        unit_price   AS raw_unit_price,
+        customer_id  AS raw_customer_id,
+        country      AS raw_country
+    FROM {{ source('raw', 'ecommerce_data') }}
+),
+
+typed AS (
+    SELECT
+        {{ normalize_code('raw_invoice_no') }}       AS invoice_no,
+        {{ normalize_code('raw_stock_code') }}       AS stock_code,
+        {{ normalize_description('raw_description') }} AS description,
+        {{ safe_integer('raw_quantity') }}           AS quantity,
+        CASE
+            WHEN NULLIF(BTRIM(raw_invoice_date), '') IS NULL THEN NULL
+            WHEN BTRIM(raw_invoice_date) ~ '^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}$'
+                THEN (TO_TIMESTAMP(BTRIM(raw_invoice_date), 'MM/DD/YYYY HH24:MI') AT TIME ZONE 'UTC')
+            ELSE NULL
+        END                                          AS invoice_date_utc,
+        {{ safe_numeric('raw_unit_price') }}         AS unit_price,
+        COALESCE(NULLIF(BTRIM(raw_customer_id), ''), 'GUEST') AS customer_id,
+        UPPER(REGEXP_REPLACE(BTRIM(CAST(raw_country AS TEXT)), '\s+', ' ', 'g')) AS country,
+        'ecommerce_data'                             AS source_file
+    FROM source
+    WHERE NULLIF(BTRIM(raw_invoice_no), '') IS NOT NULL
+      AND NULLIF(BTRIM(raw_stock_code), '') IS NOT NULL
 ),
 
 cleaned AS (
     SELECT
-        -- Normalizar código de factura
-        UPPER(TRIM(invoice_no))                         AS invoice_no,
-
-        -- Normalizar código de producto: mayúsculas y sin espacios
-        UPPER(TRIM(stock_code))                         AS stock_code,
-
-        -- Descripción canónica: MAYÚSCULAS para todo (estandarización simple y consistente)
-        UPPER(TRIM(description))                        AS description,
-
-        -- Cantidad: castear a INTEGER, NULL si no es un número válido
+        *,
         CASE
-            WHEN quantity ~ '^-?[0-9]+$'
-            THEN quantity::INTEGER
-            ELSE NULL
-        END                                             AS quantity,
-
-        -- Fecha a UTC. Formato fuente: M/D/YYYY H:MM
-        CASE
-            WHEN invoice_date ~ '^\d{1,2}/\d{1,2}/\d{4} \d{1,2}:\d{2}$'
-            THEN TO_TIMESTAMP(invoice_date, 'MM/DD/YYYY HH24:MI') AT TIME ZONE 'UTC'
-            ELSE NULL
-        END                                             AS invoice_date_utc,
-
-        -- Precio: castear a NUMERIC, NULL si no es válido
-        CASE
-            WHEN unit_price ~ '^[0-9]*\.?[0-9]+$'
-            THEN unit_price::NUMERIC(10, 2)
-            ELSE NULL
-        END                                             AS unit_price,
-
-        -- CustomerID: NULL → 'GUEST' (ver decisión en docs/)
-        COALESCE(NULLIF(TRIM(customer_id), ''), 'GUEST') AS customer_id,
-
-        UPPER(TRIM(country))                            AS country,
-
-        -- Clasificación: DEVOLUCION si la factura tiene prefijo C o la cantidad es negativa
-        CASE
-            WHEN UPPER(TRIM(invoice_no)) LIKE 'C%' THEN 'DEVOLUCION'
-            WHEN quantity ~ '^-?[0-9]+$' AND quantity::INTEGER <= 0 THEN 'DEVOLUCION'
+            WHEN quantity IS NULL THEN NULL
+            WHEN quantity <= 0 THEN 'DEVOLUCION'
             ELSE 'VENTA'
-        END                                             AS transaction_type,
-
-        'ecommerce_data'                                AS source_file
-
-    FROM source
-    WHERE invoice_no IS NOT NULL
-      AND stock_code IS NOT NULL
+        END AS transaction_type
+    FROM typed
 )
 
-SELECT * FROM cleaned
+SELECT
+    invoice_no,
+    stock_code,
+    description,
+    quantity,
+    invoice_date_utc,
+    unit_price,
+    customer_id,
+    country,
+    transaction_type,
+    source_file
+FROM cleaned

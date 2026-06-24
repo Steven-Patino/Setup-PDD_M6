@@ -9,10 +9,11 @@
 #   ✗ flower         — panel de monitoreo de Celery
 #
 # SERVICIOS ACTIVOS:
-#   ✓ postgres-meta      — BD interna de metadatos de Airflow (NO es tu DW)
-#   ✓ airflow-init       — inicializa BD, crea usuario, conexión y variables (corre 1 vez)
-#   ✓ airflow-webserver  — UI en http://localhost:8080
-#   ✓ airflow-scheduler  — orquestador con LocalExecutor
+#   ✓ postgres-meta        — BD interna de metadatos de Airflow (NO es tu DW)
+#   ✓ airflow-init         — inicializa BD, crea usuario, conexión y variables (corre 1 vez)
+#   ✓ airflow-webserver    — UI en http://localhost:8080
+#   ✓ airflow-scheduler    — orquestador con LocalExecutor
+#   ✓ airflow-dag-processor — procesa y registra los DAGs (NUEVO en Airflow 3.x)
 # =============================================================================
 
 x-airflow-common:
@@ -28,11 +29,20 @@ x-airflow-common:
     # ── Executor ─────────────────────────────────────────────────────────────
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
 
+    # ── Comunicación interna worker ↔ API server (necesario en Airflow 3.x) ──
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-webserver:8080/execution/'
+
+    # ── Clave JWT compartida para firmar/verificar tokens internos worker↔API ─
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET}
+
     # ── Metadatos internos de Airflow (postgres-meta, red interna Docker) ────
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-meta/airflow
 
     # ── Seguridad ─────────────────────────────────────────────────────────────
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+
+    # ── Auth Manager (FAB → permite crear usuarios con roles en Airflow 3.x) ─
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
 
     # ── Comportamiento ────────────────────────────────────────────────────────
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
@@ -93,23 +103,31 @@ services:
   # 2. Inicialización — Corre UNA VEZ y termina con código 0
   # ---------------------------------------------------------------------------
   # Este servicio:
-  #   a) Migra la BD de metadatos de Airflow
-  #   b) Crea el usuario administrador en la UI
-  #   c) Registra la Connection 'postgres_datamart' (BD externa del proyecto)
-  #   d) Inicializa las Variables que usa el DAG
+  #   a) Prepara carpetas y permisos (corre como root)
+  #   b) Migra la BD de metadatos de Airflow
+  #   c) Migra las tablas de FAB y crea el usuario administrador en la UI
+  #   d) Registra la Connection 'postgres_datamart' (BD externa del proyecto)
+  #   e) Inicializa las Variables que usa el DAG
   # Los servicios webserver y scheduler esperan a que este termine con éxito.
   # ---------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
     container_name: airflow_init
+    user: "0:0"          # corre como root SOLO para arreglar permisos
     entrypoint: /bin/bash
     command:
       - -c
       - |
+        echo "=== [0/4] Preparando carpetas y permisos... ==="
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/dbt /opt/airflow/data
+        chown -R "50000:0" /opt/airflow/logs /opt/airflow/plugins /opt/airflow/dbt
+        chmod -R 775 /opt/airflow/logs /opt/airflow/plugins /opt/airflow/dbt
+
         echo "=== [1/4] Migrando base de datos de metadatos... ==="
         airflow db migrate
 
-        echo "=== [2/4] Creando usuario administrador... ==="
+        echo "=== [2/4] Migrando tablas FAB y creando usuario administrador... ==="
+        airflow fab-db migrate
         airflow users create \
           --username "${_AIRFLOW_WWW_USER_USERNAME:-admin}" \
           --firstname "Admin" \
@@ -140,16 +158,16 @@ services:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # 3. Webserver — Interfaz gráfica de Airflow
+  # 3. Webserver — Interfaz gráfica + API server de Airflow
   # ---------------------------------------------------------------------------
   airflow-webserver:
     <<: *airflow-common
     container_name: airflow_webserver
-    command: webserver
+    command: api-server
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -167,6 +185,25 @@ services:
     <<: *airflow-common
     container_name: airflow_scheduler
     command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ---------------------------------------------------------------------------
+  # 5. DAG Processor — Procesa y registra los DAGs (NUEVO en Airflow 3.x)
+  # ---------------------------------------------------------------------------
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airflow_dag_processor
+    command: dag-processor
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
       interval: 30s

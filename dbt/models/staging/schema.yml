@@ -36,6 +36,10 @@ models:
         tests: [not_null]
       - name: stock_code
         tests: [not_null]
+      - name: transaction_type
+        tests:
+          - accepted_values:
+              values: ['VENTA', 'DEVOLUCION']
 
   - name: stg_transactions_unified
     description: "Unión deduplicada de ambas fuentes. Clave compuesta: invoice_no + stock_code + fecha"
@@ -43,3 +47,17 @@ models:
       - name: transaction_key
         description: "Clave única MD5(invoice_no + stock_code + invoice_date_utc)"
         tests: [not_null, unique]
+      - name: transaction_type
+        tests:
+          - accepted_values:
+              values: ['VENTA', 'DEVOLUCION']
+      - name: invoice_no
+        tests: [not_null]
+      - name: stock_code
+        tests: [not_null]
+      - name: quantity
+        tests: [not_null]
+      - name: invoice_date_utc
+        tests: [not_null]
+      - name: unit_price
+        tests: [not_null]

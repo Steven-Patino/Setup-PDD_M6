@@ -1,35 +1,42 @@
 -- =============================================================================
 -- Dimensión: dim_producto
 -- =============================================================================
--- Genera un registro único por código de producto con:
---   - Nombre canónico: se elige la descripción más frecuente (en mayúsculas).
---     Esto resuelve el caso "ALARM CLOCK BAKELIKE PINK" vs "alarm clock bakelike pink".
---   - Categoría: asignada por palabras clave en la descripción.
---     (Estrategia sin API: basada en los propios datos de las transacciones)
+-- Canonico por codigo de producto:
+--   - Se usa la descripcion normalizada mas frecuente.
+--   - Si hay empate, se prefiere la descripcion mas larga y luego la alfabética.
+-- Categoría:
+--   - Estrategia sin API: clasificacion por palabras clave en la descripcion.
 -- =============================================================================
 
-{{ config(materialized='table', schema='marts') }}
+{{ config(
+    materialized='table',
+    schema='marts',
+    post_hook=["ALTER TABLE \"{{ target.database }}\".\"marts\".\"dim_producto\" ADD CONSTRAINT pk_dim_producto PRIMARY KEY (producto_key)"]
+) }}
 
-WITH todas_descripciones AS (
+WITH descripciones AS (
     SELECT
         stock_code,
         description,
         COUNT(*) AS frecuencia
     FROM {{ ref('stg_transactions_unified') }}
     WHERE stock_code IS NOT NULL
-    GROUP BY stock_code, description
+      AND description IS NOT NULL
+    GROUP BY 1, 2
 ),
 
--- Para cada producto, quedarse con la descripción más frecuente
 descripcion_canonica AS (
     SELECT DISTINCT ON (stock_code)
         stock_code,
         description AS nombre_canonico
-    FROM todas_descripciones
-    ORDER BY stock_code, frecuencia DESC
+    FROM descripciones
+    ORDER BY
+        stock_code,
+        frecuencia DESC,
+        LENGTH(description) DESC,
+        description ASC
 ),
 
--- Asignar categoría según palabras clave (reemplaza la API de catálogo)
 con_categoria AS (
     SELECT
         stock_code,
@@ -37,31 +44,37 @@ con_categoria AS (
         CASE
             WHEN nombre_canonico LIKE '%LIGHT%'
               OR nombre_canonico LIKE '%LAMP%'
+              OR nombre_canonico LIKE '%CANDLE%'
+              OR nombre_canonico LIKE '%LANTERN%'
               OR nombre_canonico LIKE '%GLASS BALL%'
-              OR nombre_canonico LIKE '%CANDLE%'    THEN 'Iluminacion'
+                THEN 'Iluminacion'
             WHEN nombre_canonico LIKE '%BAG%'
-              OR nombre_canonico LIKE '%LUNCH%'     THEN 'Accesorios'
+              OR nombre_canonico LIKE '%BASKET%'
+              OR nombre_canonico LIKE '%LUNCH%'
+                THEN 'Accesorios'
             WHEN nombre_canonico LIKE '%CLOCK%'
               OR nombre_canonico LIKE '%FRAME%'
+              OR nombre_canonico LIKE '%BOX%'
               OR nombre_canonico LIKE '%SEWING%'
               OR nombre_canonico LIKE '%BUILDING BLOCK%'
-              OR nombre_canonico LIKE '%BOX%'       THEN 'Hogar'
-            WHEN nombre_canonico LIKE '%WARMER%'
+                THEN 'Hogar'
+            WHEN nombre_canonico LIKE '%HEART%'
               OR nombre_canonico LIKE '%ORNAMENT%'
               OR nombre_canonico LIKE '%BIRD%'
-              OR nombre_canonico LIKE '%HEART%'     THEN 'Decoracion'
+              OR nombre_canonico LIKE '%TREE%'
+                THEN 'Decoracion'
             WHEN nombre_canonico LIKE '%POSTAGE%'
               OR nombre_canonico LIKE '%DOTCOM%'
-              OR nombre_canonico LIKE '%MANUAL%'    THEN 'Logistica'
+              OR nombre_canonico LIKE '%MANUAL%'
+                THEN 'Logistica'
             ELSE 'General'
         END AS categoria
     FROM descripcion_canonica
 )
 
 SELECT
-    -- Clave surrogada: MD5 del stock_code (estable entre ejecuciones)
-    MD5(stock_code)             AS producto_key,
-    stock_code                  AS codigo_producto,
+    MD5(stock_code) AS producto_key,
+    stock_code      AS codigo_producto,
     nombre_canonico,
     categoria
 FROM con_categoria
