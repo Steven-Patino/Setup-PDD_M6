@@ -7,6 +7,12 @@ usando **Apache Airflow** (LocalExecutor) como orquestador y **dbt** para transf
 
 ---
 
+## Diagrama del Modelo
+
+![Diagrama del modelo marts](./postgres%20-%20steven_patino%20-%20marts.png)
+
+---
+
 ## Estado Actual
 
 El proyecto ya está operativo de punta a punta con esta arquitectura:
@@ -83,7 +89,14 @@ Simulacro_PDD_M6/
 
 ---
 
-## Inicio Rápido — 3 Pasos
+## Inicio Rápido
+
+### Paso 0 — Clonar el repositorio
+
+```bash
+git clone https://github.com/Steven-Patino/Setup-PDD_M6.git
+cd Setup-PDD_M6
+```
 
 ### Paso 1 — Configurar credenciales
 
@@ -153,6 +166,12 @@ Abrir en el navegador: **http://localhost:8080**
 3. Hacer clic en **▶ Trigger DAG** para ejecutarlo manualmente
 
 El pipeline tarda ~2-5 minutos con los datos de muestra.
+
+### Paso 4 — Validar resultados
+
+1. Confirmar que el DAG `datamart_pipeline` terminó en verde.
+2. Revisar que `dbt_test` haya pasado sin errores.
+3. Ejecutar la consulta de conteos en `raw`, `staging` y `marts` si quieres validar la carga de extremo a extremo.
 
 ---
 
