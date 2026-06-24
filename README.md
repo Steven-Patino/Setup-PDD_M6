@@ -7,6 +7,20 @@ usando **Apache Airflow** (LocalExecutor) como orquestador y **dbt** para transf
 
 ---
 
+## Estado Actual
+
+El proyecto ya está operativo de punta a punta con esta arquitectura:
+
+- Airflow 3.2.2 orquesta la ingesta y las transformaciones.
+- dbt 1.8.4 construye la capa `staging` y el star schema de `marts`.
+- PostgreSQL externo almacena `raw`, `staging` y `marts`.
+- La capa `staging` limpia, tipa y unifica las dos fuentes CSV.
+- La capa `marts` expone dimensiones y hechos con PK/FK físicas en la base.
+- La asignación de categorías no depende de la API opcional, sino de reglas locales por palabras clave.
+- Las devoluciones se separan de las ventas y el revenue neto se calcula a partir de ambas capas.
+
+---
+
 ## Requisitos Previos
 
 | Herramienta | Versión mínima | Verificar con |
@@ -201,8 +215,8 @@ crear_schemas_y_tablas
 | Schema | Contiene |
 |---|---|
 | `raw` | Tablas de ingesta directa desde CSV (texto sin transformar) + `rejected_records` |
-| `staging` | Vistas limpias: tipos correctos, fechas UTC, descriptions canónicas |
-| `marts` | Star Schema: `dim_*` + `fact_ventas` + `fact_devoluciones` + `mart_revenue_producto` |
+| `staging` | Vistas limpias: tipos correctos, fechas UTC, descriptions canónicas, unificación y deduplicación |
+| `marts` | Star Schema con PK/FK físicas: `dim_*` + `fact_ventas` + `fact_devoluciones` + `mart_revenue_producto` |
 
 ---
 
@@ -246,6 +260,11 @@ Ver [docs/decisiones_tecnicas.md](docs/decisiones_tecnicas.md) para:
 - Cómo se resolvió cada caso ambiguo (CustomerID nulo, descripciones, duplicados)
 - Garantía de idempotencia del DAG
 - Estrategia de asignación de categorías sin API
+
+Estado resumido del modelo dbt:
+- `staging` deja la data lista para análisis con limpieza y normalización.
+- `marts` usa dimensiones y hechos relacionados por claves físicas.
+- Las consultas de negocio pueden resolverse desde `mart_revenue_producto` y los facts.
 
 ---
 
