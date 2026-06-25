@@ -72,9 +72,35 @@ x-airflow-common:
     &airflow-common-depends-on
     postgres-meta:
       condition: service_healthy
+    setup-permissions:
+      condition: service_completed_successfully
 
 
 services:
+
+  # ---------------------------------------------------------------------------
+  # 0. Permisos — Corre UNA VEZ como root para preparar directorios de volúmenes
+  # ---------------------------------------------------------------------------
+  # En un git clone fresco, ./logs no existe y Docker la crea como root:755.
+  # Este servicio la vuelve escribible para el usuario airflow (UID 50000)
+  # antes de que arranque cualquier otro servicio.
+  # ---------------------------------------------------------------------------
+  setup-permissions:
+    image: alpine:3.19
+    container_name: airflow_setup_perms
+    user: "0:0"
+    volumes:
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./dbt:/opt/airflow/dbt
+    command: >
+      sh -c "
+        mkdir -p /opt/airflow/logs /opt/airflow/plugins /opt/airflow/dbt &&
+        chmod -R 777 /opt/airflow/logs &&
+        chmod -R 775 /opt/airflow/plugins /opt/airflow/dbt &&
+        chown -R 50000:0 /opt/airflow/logs /opt/airflow/plugins /opt/airflow/dbt
+      "
+    restart: "no"
 
   # ---------------------------------------------------------------------------
   # 1. PostgreSQL interno — SOLO para metadatos de Airflow
@@ -102,22 +128,12 @@ services:
   # ---------------------------------------------------------------------------
   # 2. Inicialización — Corre UNA VEZ y termina con código 0
   # ---------------------------------------------------------------------------
-  # Este servicio:
-  #   a) Prepara carpetas y permisos (corre como root)
-  #   b) Migra la BD de metadatos de Airflow
-  #   c) Migra las tablas de FAB y crea el usuario administrador en la UI
-  #   d) Registra la Connection 'postgres_datamart' (BD externa del proyecto)
-  #   e) Inicializa las Variables que usa el DAG
-  # Los servicios webserver y scheduler esperan a que este termine con éxito.
-  # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-  # 2. Inicialización — Corre UNA VEZ y termina con código 0
+  # Migra la BD de metadatos, crea el usuario admin, registra la Connection
+  # 'postgres_datamart' y las Variables que usa el DAG.
   # ---------------------------------------------------------------------------
   airflow-init:
     <<: *airflow-common
     container_name: airflow_init
-    # 1. ELIMINAMOS 'user: "0:0"' para que corra con el usuario correcto de Airflow
-    # 2. ELIMINAMOS 'entrypoint: /bin/bash' para usar el oficial que inicializa Python
     command:
       - bash
       - -c
@@ -160,6 +176,8 @@ services:
     depends_on:
       postgres-meta:
         condition: service_healthy
+      setup-permissions:
+        condition: service_completed_successfully
   # ---------------------------------------------------------------------------
   # 3. Webserver — Interfaz gráfica + API server de Airflow
   # ---------------------------------------------------------------------------
