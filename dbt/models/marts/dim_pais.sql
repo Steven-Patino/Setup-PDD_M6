@@ -8,6 +8,7 @@
 {{ config(
     materialized='table',
     schema='marts',
+    pre_hook=["ALTER TABLE IF EXISTS \"{{ target.database }}\".\"marts\".\"dim_pais\" DROP CONSTRAINT IF EXISTS pk_dim_pais"],
     post_hook=["ALTER TABLE \"{{ target.database }}\".\"marts\".\"dim_pais\" ADD CONSTRAINT pk_dim_pais PRIMARY KEY (pais_key)"]
 ) }}
 
